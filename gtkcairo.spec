@@ -13,7 +13,6 @@ Patch:	gtkcairo-0.3-cairo.patch
 URL:		http://cairographics.org/GtkCairo
 BuildRequires:	cairo-devel
 BuildRequires:	gtk2-devel
-BuildRoot:	%_tmppath/%name-%version-root
 
 %description
 GtkCairo is a library that provides a new widget to be used in your
