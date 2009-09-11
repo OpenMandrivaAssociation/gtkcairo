@@ -5,7 +5,7 @@
 Summary:	Gtk widget wrapper for Cairo surfaces
 Name:		gtkcairo
 Version:	0.3
-Release:	%mkrel 5
+Release:	%mkrel 6
 License:	LGPL
 Group:		System/Libraries
 Source0:	http://cairographics.org/snapshots/%name-%version.tar.bz2
