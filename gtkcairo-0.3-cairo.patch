@@ -1,0 +1,1126 @@
+--- gtkcairo-0.3/gtkcairo/gdkcairo.c.cairo	2004-08-09 18:18:37.000000000 +0200
++++ gtkcairo-0.3/gtkcairo/gdkcairo.c	2005-08-12 10:09:24.000000000 +0200
+@@ -18,252 +18,401 @@
+  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
+  */
+ 
++#include <stdio.h>
++#include <stdlib.h>
++
+ #include <gdk/gdkx.h>
+ #include "gdkcairo.h"
++#include <string.h>
++
++#ifdef CAIRO_HAS_XLIB_SURFACE
++#include <cairo-xlib.h>
++#endif
++
++#ifdef CAIRO_HAS_GLITZ_SURFACE
++#include <cairo-glitz.h>
++#endif
+ 
+ static void
+-gdkcairo_init (gdkcairo_t *self, GtkWidget *widget)
++gdkcairo_init (gdkcairo_t *self,
++               GtkWidget  *widget)
+ {
+-    self->widget = widget;
+-    self->cr     = cairo_create ();
+-
++  self->widget = widget;
++  self->cr = NULL;
+ 
+-    self->backend = GDKCAIRO_BACKEND_IMAGE;
+-    #ifdef CAIRO_HAS_XLIB_SURFACE
+-    self->backend = GDKCAIRO_BACKEND_XLIB;
+-    #endif
+-    #ifdef USE_GL
+-    {
+-        char *GTKCAIRO_GL=getenv ("GTKCAIRO_GL");
+-        if (GTKCAIRO_GL && atoi (GTKCAIRO_GL))
++  self->backend = GDKCAIRO_BACKEND_IMAGE;
++#ifdef CAIRO_HAS_XLIB_SURFACE
++  self->backend = GDKCAIRO_BACKEND_XLIB;
++#endif
++#ifdef USE_GL
++  {
++    char     *GTKCAIRO_GL = getenv ("GTKCAIRO_GL");
++    if (GTKCAIRO_GL && atoi (GTKCAIRO_GL))
++      self->backend = GDKCAIRO_BACKEND_GL;
++  }
++#endif
++  {
++    char     *GDKCAIRO_BACKEND = getenv ("GTKCAIRO_BACKEND");
++    if (GDKCAIRO_BACKEND)
++      {
++        if (!strcmp (GDKCAIRO_BACKEND, "image"))
++          {
++            self->backend = GDKCAIRO_BACKEND_IMAGE;
++          }
++#ifdef CAIRO_HAS_XLIB_SURFACE
++        else if (!strcmp (GDKCAIRO_BACKEND, "xlib"))
++          {
++            self->backend = GDKCAIRO_BACKEND_XLIB;
++          }
++#endif
++#ifdef USE_GL
++        else if (!strcmp (GDKCAIRO_BACKEND, "gl"))
++          {
+             self->backend = GDKCAIRO_BACKEND_GL;
+-    }
+-    #endif
+-    {
+-        char *GDKCAIRO_BACKEND = getenv ("GTKCAIRO_BACKEND");
+-        if (GDKCAIRO_BACKEND) {
+-            if (!strcmp (GDKCAIRO_BACKEND, "image")) {
+-                self->backend = GDKCAIRO_BACKEND_IMAGE;
+-            }
+-            #ifdef CAIRO_HAS_XLIB_SURFACE
+-            else if (!strcmp (GDKCAIRO_BACKEND, "xlib")) {
+-                self->backend = GDKCAIRO_BACKEND_XLIB;
+-            }
+-            #endif
+-            #ifdef USE_GL
+-            else if (!strcmp (GDKCAIRO_BACKEND, "gl")) {
+-                self->backend = GDKCAIRO_BACKEND_GL;
+-            }
+-            #endif
+-            else {
+-                self->backend = GDKCAIRO_BACKEND_IMAGE;
+-                #ifdef CAIRO_HAS_XLIB_SURFACE
+-                self->backend = GDKCAIRO_BACKEND_XLIB;
+-                #endif
+-                fprintf (stderr, "unknown GTKCAIRO_BACKEND '%s' falling back\n", GDKCAIRO_BACKEND);
+-            }
+-        }
+-    }
++          }
++#endif
++        else
++          {
++            self->backend = GDKCAIRO_BACKEND_IMAGE;
++#ifdef CAIRO_HAS_XLIB_SURFACE
++            self->backend = GDKCAIRO_BACKEND_XLIB;
++#endif
++            fprintf (stderr, "unknown GTKCAIRO_BACKEND '%s' falling back\n",
++                     GDKCAIRO_BACKEND);
++          }
++      }
++  }
+ 
+-    switch (self->backend) {
+-        case GDKCAIRO_BACKEND_IMAGE:
+-            break;
+-        #ifdef CAIRO_HAS_XLIB_SURFACE
+-        case GDKCAIRO_BACKEND_XLIB:
+-            break;
+-        #endif
+-        #ifdef USE_GL
+-        case GDKCAIRO_BACKEND_GL:
+-            self->glitz_surface = NULL;
+-            break;
+-        #endif
+-        default:
+-            g_assert (0);
+-            break;
++  switch (self->backend)
++    {
++    case GDKCAIRO_BACKEND_IMAGE:
++      break;
++#ifdef CAIRO_HAS_XLIB_SURFACE
++    case GDKCAIRO_BACKEND_XLIB:
++      break;
++#endif
++#ifdef USE_GL
++    case GDKCAIRO_BACKEND_GL:
++      self->glitz_surface = NULL;
++      break;
++#endif
++    default:
++      g_assert (0);
++      break;
+     }
+ }
+ 
+ gdkcairo_t *
+-gdkcairo_new (GtkWidget *widget)
++gdkcairo_new (GtkWidget   *widget)
+ {
+-    gdkcairo_t *self = malloc (sizeof (gdkcairo_t));
+-    gdkcairo_init (self, widget);
+-    return self;
++  gdkcairo_t *self = malloc (sizeof (gdkcairo_t));
++  gdkcairo_init (self, widget);
++  return self;
+ }
+ 
+ void
+ gdkcairo_destroy (gdkcairo_t *self)
+ {
+-	if (self->cr) {
+-		cairo_destroy (self->cr);
+-        self->cr = NULL;
+-	}
++  GtkWidget *widget = self->widget;
++
++  if (self->cr != NULL)
++    {
++      cairo_destroy (self->cr);
++      self->cr = NULL;
++    }
++#ifdef USE_GL
++  if (self->glitz_surface != NULL)
++    {
++      glitz_surface_destroy (self->glitz_surface);
++      self->glitz_surface = NULL;
++    }
++#endif
++  /* FIXME: gtk_style_detach (self->widget->style) is missing */
++  /* FIXME: how is self freed? */
+ }
+ 
+ void
+ gdkcairo_realize (gdkcairo_t *self)
+ {
+-	GtkWidget *widget=self->widget;
+-	GdkWindowAttr attributes;
+-	gint attributes_mask;
+-
+-	g_return_if_fail (widget != NULL);
+-
+-	GTK_WIDGET_SET_FLAGS (self->widget, GTK_REALIZED);
+-
+-	attributes.x = widget->allocation.x;
+-	attributes.y = widget->allocation.y;
+-	attributes.width = widget->allocation.width;
+-	attributes.height = widget->allocation.height;
+-	attributes.wclass = GDK_INPUT_OUTPUT;
+-	attributes.window_type = GDK_WINDOW_CHILD;
+-	attributes.event_mask = gtk_widget_get_events (widget) | GDK_EXPOSURE_MASK;
+-	attributes.visual = gtk_widget_get_visual (widget);
++  GtkWidget *widget = self->widget;
++  GdkWindowAttr attributes;
++  gint      attributes_mask;
++
++  g_return_if_fail (widget != NULL);
++
++  GTK_WIDGET_SET_FLAGS (self->widget, GTK_REALIZED);
++
++  attributes.x = widget->allocation.x;
++  attributes.y = widget->allocation.y;
++  attributes.width = widget->allocation.width;
++  attributes.height = widget->allocation.height;
++  attributes.wclass = GDK_INPUT_OUTPUT;
++  attributes.window_type = GDK_WINDOW_CHILD;
++  attributes.event_mask = gtk_widget_get_events (widget) | GDK_EXPOSURE_MASK;
++  attributes.visual = gtk_widget_get_visual (widget);
+ 
+ retry:
+-    switch (self->backend) {
+-        case GDKCAIRO_BACKEND_IMAGE:
+-            break;
+-        #ifdef CAIRO_HAS_XLIB_SURFACE
+-        case GDKCAIRO_BACKEND_XLIB:
+-	      attributes.colormap = gtk_widget_get_colormap (widget);
+-
+-	      attributes_mask = GDK_WA_X | GDK_WA_Y | GDK_WA_VISUAL | GDK_WA_COLORMAP;
+-	      widget->window = gdk_window_new (widget->parent->window,
+-			    &attributes, attributes_mask);
+-
+-            break;
+-        #endif
+-        #ifdef USE_GL
+-        case GDKCAIRO_BACKEND_GL: {
+-	        Display *dpy = gdk_x11_get_default_xdisplay ();
+-	        int screen = gdk_x11_get_default_screen ();
+-            XVisualInfo *vinfo;
+-	        glitz_format_t *onscreen_format;
+-
+-	        onscreen_format = glitz_glx_find_standard_format (dpy, screen,
+-			    GLITZ_FORMAT_OPTION_ONSCREEN_MASK, GLITZ_STANDARD_ARGB32);
+-	        if (!onscreen_format)
+-	             onscreen_format = glitz_glx_find_standard_format (dpy, screen,
+-	             GLITZ_FORMAT_OPTION_ONSCREEN_MASK, GLITZ_STANDARD_RGB24);
+-            
+-	        /*  XSetWindowAttributes xswa;*/
+-
+-	        if (onscreen_format) {
+-              vinfo = glitz_glx_get_visual_info_from_format (dpy, screen, onscreen_format);
+-              gtk_widget_set_double_buffered (widget, FALSE);
+-              attributes.visual = gdkx_visual_get (vinfo->visualid);
+-              attributes.colormap = gdk_colormap_new (attributes.visual, TRUE);
+-
+-		      attributes_mask = GDK_WA_X | GDK_WA_Y | GDK_WA_VISUAL | GDK_WA_COLORMAP;
+-
+-		      widget->window = gdk_window_new (gtk_widget_get_parent_window (widget),
+-			                                   &attributes, attributes_mask);
+-                self->glitz_surface =
+-                glitz_glx_surface_create_for_window (dpy, screen,
+-					  onscreen_format,
+-					  gdk_x11_drawable_get_xid (widget->window));
+-
+-              cairo_set_target_gl (self->cr, self->glitz_surface);
+-            } else {
+-            g_error ("could not find a usable GL visual\n");
++  switch (self->backend)
++    {
++    case GDKCAIRO_BACKEND_IMAGE:
++      break;
++#ifdef CAIRO_HAS_XLIB_SURFACE
++    case GDKCAIRO_BACKEND_XLIB:
++      attributes.colormap = gtk_widget_get_colormap (widget);
++
++      attributes_mask = GDK_WA_X | GDK_WA_Y | GDK_WA_VISUAL | GDK_WA_COLORMAP;
++      widget->window = gdk_window_new (widget->parent->window,
++                                       &attributes, attributes_mask);
++
++      break;
++#endif
++#ifdef USE_GL
++    case GDKCAIRO_BACKEND_GL:
++      {
++        Display  *dpy = gdk_x11_get_default_xdisplay ();
++        int       screen = gdk_x11_get_default_screen ();
++        XVisualInfo *vinfo;
++        glitz_drawable_format_t *dformat;
++        glitz_drawable_format_t templ;
++        unsigned long mask;
++        char     *GTKCAIRO_GL_DOUBLEBUFFER;
++        char     *GTKCAIRO_GL_SAMPLES;
++
++        GTKCAIRO_GL_DOUBLEBUFFER = getenv ("GTKCAIRO_GL_DOUBLEBUFFER");
++        GTKCAIRO_GL_SAMPLES = getenv ("GTKCAIRO_GL_SAMPLES");
++
++        templ.types.window = 1;
++        mask = GLITZ_FORMAT_WINDOW_MASK;
++
++        if (GTKCAIRO_GL_DOUBLEBUFFER)
++          {
++            if (atoi (GTKCAIRO_GL_DOUBLEBUFFER))
++              templ.doublebuffer = 1;
++            else
++              templ.doublebuffer = 0;
++
++            mask |= GLITZ_FORMAT_DOUBLEBUFFER_MASK;
++          }
++
++        if (GTKCAIRO_GL_SAMPLES)
++          {
++            templ.samples = atoi (GTKCAIRO_GL_SAMPLES);
++
++            /* less than 1 sample is not possible */
++            if (templ.samples < 1)
++              templ.samples = 1;
++
++            mask |= GLITZ_FORMAT_SAMPLES_MASK;
++          }
++
++        dformat =
++          glitz_glx_find_drawable_format (dpy, screen, mask, &templ, 0);
++
++        if (dformat)
++          {
++            glitz_drawable_t *drawable;
++            glitz_format_t *format;
++            XID       xid;
++            cairo_surface_t *cr_surface;
++
++            vinfo = glitz_glx_get_visual_info_from_format (dpy, screen,
++                                                           dformat);
++            gtk_widget_set_double_buffered (widget, FALSE);
++            attributes.visual = gdkx_visual_get (vinfo->visualid);
++            attributes.colormap = gdk_colormap_new (attributes.visual, TRUE);
++
++            attributes_mask =
++              GDK_WA_X | GDK_WA_Y | GDK_WA_VISUAL | GDK_WA_COLORMAP;
++
++            widget->window =
++              gdk_window_new (gtk_widget_get_parent_window (widget),
++                              &attributes, attributes_mask);
++
++            xid = gdk_x11_drawable_get_xid (widget->window);
++
++            drawable =
++              glitz_glx_create_drawable_for_window (dpy, screen,
++                                                    dformat, xid,
++                                                    attributes.width,
++                                                    attributes.height);
++            format = glitz_find_standard_format (drawable,
++                                                 GLITZ_STANDARD_ARGB32);
++            self->glitz_surface =
++              glitz_surface_create (drawable,
++                                    format,
++                                    attributes.width,
++				    attributes.height,
++				    0, NULL);
++
++            glitz_surface_attach (self->glitz_surface,
++                                  drawable,
++                                  (dformat->doublebuffer) ?
++                                  GLITZ_DRAWABLE_BUFFER_BACK_COLOR :
++                                  GLITZ_DRAWABLE_BUFFER_FRONT_COLOR, 0, 0);
++
++            glitz_drawable_destroy (drawable);
++
++            cr_surface = cairo_glitz_surface_create (self->glitz_surface);
++            self->cr = cairo_create (cr_surface);
++            cairo_surface_destroy (cr_surface);
++          }
++        else
++          {
++            g_warning ("could not find a usable GL visual\n");
+             self->backend = GDKCAIRO_BACKEND_XLIB;
+             goto retry;
+-             }
+-            }
+-            break;
+-        #endif
+-        default:
+-            break;
++          }
++      }
++      break;
++#endif
++    default:
++      break;
+     }
+ 
+-    gtk_style_attach (widget->style, widget->window);
+-	gtk_style_set_background (widget->style, widget->window, GTK_STATE_NORMAL);
+-	gdk_window_set_user_data (widget->window, widget);
++  gtk_style_attach (widget->style, widget->window);
++  gtk_style_set_background (widget->style, widget->window, GTK_STATE_NORMAL);
++  gdk_window_set_user_data (widget->window, widget);
+ }
+ 
+ void
+ gdkcairo_size_allocate (gdkcairo_t *self,
+-                        int x,
+-                        int y,
+-                        int width,
+-                        int height)
+-{
+-	if (GTK_WIDGET_REALIZED (self->widget)) {
+-       gdk_window_move_resize (self->widget->window, x, y, width, height);
+-
+-       switch (self->backend) {
+-         #ifdef CAIRO_HAS_XLIB_SURFACE
+-           case GDKCAIRO_BACKEND_XLIB:
+-               break;
+-         #endif
+-         #ifdef USE_GL
+-           case GDKCAIRO_BACKEND_GL:
+-            if (self->glitz_surface) {
+-				glitz_surface_update_size (self->glitz_surface);
++                        gint        x,
++                        gint        y,
++                        gint        width,
++                        gint        height)
++{
++  if (GTK_WIDGET_REALIZED (self->widget))
++    {
++      gdk_window_move_resize (self->widget->window, x, y, width, height);
++
++      switch (self->backend)
++        {
++#ifdef CAIRO_HAS_XLIB_SURFACE
++        case GDKCAIRO_BACKEND_XLIB:
++          break;
++#endif
++#ifdef USE_GL
++        case GDKCAIRO_BACKEND_GL:
++          if (self->glitz_surface)
++            {
++              glitz_format_t *format;
++              glitz_drawable_t *drawable;
++              glitz_drawable_format_t *dformat;
++              cairo_surface_t *cr_surface;
++
++              format = glitz_surface_get_format (self->glitz_surface);
++              drawable = glitz_surface_get_drawable (self->glitz_surface);
++              glitz_drawable_reference (drawable);
++              dformat = glitz_drawable_get_format (drawable);
++
++              cairo_destroy (self->cr);
++
++              glitz_surface_destroy (self->glitz_surface);
++
++              glitz_drawable_update_size (drawable, width, height);
++
++              self->glitz_surface =
++		  glitz_surface_create (drawable, format, width, height,
++					0, NULL);
++              glitz_drawable_destroy(drawable);
++
++              glitz_surface_attach (self->glitz_surface,
++                                    drawable,
++                                    (dformat->doublebuffer) ?
++                                    GLITZ_DRAWABLE_BUFFER_BACK_COLOR :
++                                    GLITZ_DRAWABLE_BUFFER_FRONT_COLOR, 0, 0);
++
++              cr_surface = cairo_glitz_surface_create (self->glitz_surface);
++              self->cr = cairo_create (cr_surface);
++              cairo_surface_destroy (cr_surface);
+             }
+-            break;
+-         #endif
+-           default:
+-              g_assert (0);
+-              break;
+-       }
++
++          break;
++#endif
++        default:
++          g_assert (0);
++          break;
++        }
+     }
+ }
+ 
+ gint
+-gdkcairo_expose (gdkcairo_t *self,
++gdkcairo_expose (gdkcairo_t     *self,
+                  GdkEventExpose *event)
+ {
+-    GtkWidget *widget = self->widget;
++  GtkWidget *widget = self->widget;
+ 
+-	g_return_val_if_fail (widget != NULL, FALSE);
+-	g_return_val_if_fail (event != NULL, FALSE);
++  g_return_val_if_fail (widget != NULL, FALSE);
++  g_return_val_if_fail (event != NULL, FALSE);
+ 
+-    switch (self->backend) {
+-        #ifdef USE_GL
+-        case GDKCAIRO_BACKEND_GL:{
+-
+-            cairo_rectangle (self->cr, 0, 0, widget->allocation.width, widget->allocation.height);
+-            cairo_set_rgb_color (self->cr, 0.7, 0.7, 0.7);  /* FIXME: use color from style */
+-            gtk_cairo_set_gdk_color (self->cr,
+-              &(self->widget->style->bg[GTK_STATE_NORMAL]) );
+-            cairo_fill      (self->cr);
+-
+-	        g_signal_emit_by_name (self->widget, "paint", self->cr);
+-            glitz_surface_swap_buffers (self->glitz_surface);
+-            XSync (gdk_x11_get_default_xdisplay (), 0);
+-        }break;
+-        #endif
+-        #ifdef CAIRO_HAS_XLIB_SURFACE
+-        case GDKCAIRO_BACKEND_XLIB: {
+-            GdkDrawable *gdkdrawable;
+-            gint x_off, y_off;
+-
+-	        gdk_window_get_internal_paint_info (widget->window,
+-			                                &gdkdrawable, &x_off, &y_off);
+-
+-	        cairo_set_target_drawable (self->cr,
+-			                       gdk_x11_drawable_get_xdisplay (gdkdrawable),
+-			                       gdk_x11_drawable_get_xid (gdkdrawable));
+-
+-	        /* counter offset of expose */
+-	        if (x_off || y_off) {
+-		        cairo_save (self->cr);
+-		        cairo_translate (self->cr, -x_off, -y_off);
+-	        }
++  switch (self->backend)
++    {
++#ifdef USE_GL
++    case GDKCAIRO_BACKEND_GL:
++      {
++        glitz_drawable_t *drawable;
++        glitz_drawable_format_t *dformat;
++
++	cairo_save (self->cr);
++	cairo_rectangle (self->cr, 0, 0, widget->allocation.width,
++                         widget->allocation.height);
++	gtk_cairo_set_gdk_color (self->cr,
++                                 &(self->widget->style->bg[GTK_STATE_NORMAL]));
++        cairo_fill (self->cr);
++	cairo_restore (self->cr);
++
++        cairo_save (self->cr);
++        g_signal_emit_by_name (self->widget, "paint", self->cr);
++        cairo_restore (self->cr);
++
++        /* FIXME: flush cairo first. */
++
++        drawable = glitz_surface_get_drawable (self->glitz_surface);
++        dformat = glitz_drawable_get_format (drawable);
++
++        glitz_surface_flush (self->glitz_surface);
++
++        if (dformat->doublebuffer)
++          glitz_drawable_swap_buffers (drawable);
++        else
++          glitz_drawable_flush (drawable);
++      }
++      break;
++#endif
++#ifdef CAIRO_HAS_XLIB_SURFACE
++    case GDKCAIRO_BACKEND_XLIB:
++      {
++        GdkDrawable *gdkdrawable;
++        gint      x_off, y_off;
++        gint      width, height;
++        cairo_surface_t *x11_surface;
++
++        /* find drawable, offset and size */
++        gdk_window_get_internal_paint_info (widget->window,
++                                            &gdkdrawable, &x_off, &y_off);
++        gdk_drawable_get_size (gdkdrawable, &width, &height);
++
++        x11_surface = cairo_xlib_surface_create
++          (gdk_x11_drawable_get_xdisplay (gdkdrawable),
++           gdk_x11_drawable_get_xid (gdkdrawable),
++           gdk_x11_visual_get_xvisual (gdk_drawable_get_visual (gdkdrawable)),
++           width, height);
++        cairo_surface_set_device_offset (x11_surface, -x_off, -y_off);
+ 
+-	        g_signal_emit_by_name (self->widget, "paint", self->cr);
++        self->cr = cairo_create (x11_surface);
++        cairo_surface_destroy (x11_surface);
+ 
+-	        if (x_off || y_off) {
+-		        cairo_restore (self->cr);
+-            }
+-	    }break;
+-        #endif
+-        default:
+-            g_assert(0);
++        g_signal_emit_by_name (self->widget, "paint", self->cr);
++
++        cairo_destroy (self->cr);
++        self->cr = NULL;
++      }
++      break;
++#endif
++    default:
++      g_assert (0);
+     }
+-	return FALSE;
++  return FALSE;
+ }
+ 
+ /* vim: set ts=4 sw=4 et : */
+--- gtkcairo-0.3/gtkcairo/gtkcairo.c.cairo	2004-08-09 18:19:11.000000000 +0200
++++ gtkcairo-0.3/gtkcairo/gtkcairo.c	2005-08-12 10:09:24.000000000 +0200
+@@ -25,29 +25,23 @@
+ #include "gdkcairo.h"
+ #include "gtkcairo.h"
+ 
+-enum {
+-	PAINT,
+-	LAST_SIGNAL
++enum
++{
++  PAINT,
++  LAST_SIGNAL
+ };
+ 
+-static void
+-gtk_cairo_class_init            (GtkCairoClass *klass);
++static void gtk_cairo_class_init (GtkCairoClass * klass);
+ 
+-static void
+-gtk_cairo_init                  (GtkCairo *gtkcairo);
++static void gtk_cairo_init (GtkCairo *gtkcairo);
+ 
+-static void
+-gtk_cairo_destroy               (GtkObject *object);
++static void gtk_cairo_destroy (GtkObject *object);
+ 
+-static void
+-gtk_cairo_realize               (GtkWidget *widget);
++static void gtk_cairo_realize (GtkWidget *widget);
+ 
+ static void
+-gtk_cairo_size_allocate         (GtkWidget     *widget,
+-                                 GtkAllocation *allocation);
+-static gint
+-gtk_cairo_expose                (GtkWidget      *widget,
+-                                 GdkEventExpose *event);
++gtk_cairo_size_allocate (GtkWidget *widget, GtkAllocation * allocation);
++static gint gtk_cairo_expose (GtkWidget *widget, GdkEventExpose *event);
+ 
+ static GtkWidgetClass *parent_class = NULL;
+ static guint signals[LAST_SIGNAL] = { 0 };
+@@ -57,163 +51,163 @@
+ GType
+ gtk_cairo_get_type (void)
+ {
+-	static GType gtk_cairo_type = 0;
++  static GType gtk_cairo_type = 0;
+ 
+-	if (!gtk_cairo_type) {
+-		static const GTypeInfo gtk_cairo_info = {
+-			sizeof (GtkCairoClass),
+-			NULL,
+-			NULL,
+-			(GClassInitFunc) gtk_cairo_class_init,
+-			NULL,
+-			NULL,
+-			sizeof (GtkCairo),
+-			0,
+-			(GInstanceInitFunc) gtk_cairo_init,
+-		};
++  if (!gtk_cairo_type)
++    {
++      static const GTypeInfo gtk_cairo_info = {
++        sizeof (GtkCairoClass),
++        NULL,
++        NULL,
++        (GClassInitFunc) gtk_cairo_class_init,
++        NULL,
++        NULL,
++        sizeof (GtkCairo),
++        0,
++        (GInstanceInitFunc) gtk_cairo_init,
++      };
+ 
+-		gtk_cairo_type = g_type_register_static (GTK_TYPE_WIDGET, "GtkCairo",
+-				                                 &gtk_cairo_info, 0);
+-	}
++      gtk_cairo_type = g_type_register_static (GTK_TYPE_WIDGET, "GtkCairo",
++                                               &gtk_cairo_info, 0);
++    }
+ 
+-	return gtk_cairo_type;
++  return gtk_cairo_type;
+ }
+ 
+ static void
+-gtk_cairo_class_init (GtkCairoClass *class)
++gtk_cairo_class_init (GtkCairoClass * class)
+ {
+-	GtkObjectClass *object_class;
+-	GtkWidgetClass *widget_class;
++  GtkObjectClass *object_class;
++  GtkWidgetClass *widget_class;
+ 
+-	object_class = (GtkObjectClass*) class;
+-	widget_class = (GtkWidgetClass*) class;
++  object_class = (GtkObjectClass *) class;
++  widget_class = (GtkWidgetClass *) class;
+ 
+-	parent_class = gtk_type_class(GTK_TYPE_WIDGET);
++  parent_class = gtk_type_class (GTK_TYPE_WIDGET);
+ 
+-	object_class->destroy = gtk_cairo_destroy;
++  object_class->destroy = gtk_cairo_destroy;
+ 
+-	widget_class->realize = gtk_cairo_realize;
+-	widget_class->expose_event = gtk_cairo_expose;
+-	widget_class->size_allocate = gtk_cairo_size_allocate;
++  widget_class->realize = gtk_cairo_realize;
++  widget_class->expose_event = gtk_cairo_expose;
++  widget_class->size_allocate = gtk_cairo_size_allocate;
+ 
+-	signals[PAINT] = g_signal_new ("paint",
+-			GTK_TYPE_CAIRO,
+-			G_SIGNAL_RUN_LAST,
+-			G_STRUCT_OFFSET (GtkCairoClass, paint),
+-			NULL, NULL,
+-			g_cclosure_marshal_VOID__POINTER,
+-			G_TYPE_NONE, 1, G_TYPE_POINTER);
++  signals[PAINT] = g_signal_new ("paint",
++                                 GTK_TYPE_CAIRO,
++                                 G_SIGNAL_RUN_LAST,
++                                 G_STRUCT_OFFSET (GtkCairoClass, paint),
++                                 NULL, NULL,
++                                 g_cclosure_marshal_VOID__POINTER,
++                                 G_TYPE_NONE, 1, G_TYPE_POINTER);
+ }
+ 
+ static void
+ gtk_cairo_init (GtkCairo *gtkcairo)
+ {
+-	gtkcairo->gdkcairo = gdkcairo_new (GTK_WIDGET (gtkcairo));
++  gtkcairo->gdkcairo = gdkcairo_new (GTK_WIDGET (gtkcairo));
+ }
+ 
+ GtkWidget *
+ gtk_cairo_new (void)
+ {
+-	GtkWidget *gtkcairo;
+-	gtkcairo = GTK_WIDGET (g_object_new (GTK_TYPE_CAIRO, NULL));
++  GtkWidget *gtkcairo;
++  gtkcairo = GTK_WIDGET (g_object_new (GTK_TYPE_CAIRO, NULL));
+ 
+-	gtk_widget_queue_draw (GTK_WIDGET (gtkcairo));
++  gtk_widget_queue_draw (GTK_WIDGET (gtkcairo));
+ 
+-	return gtkcairo;
++  return gtkcairo;
+ }
+ 
+ static void
+ gtk_cairo_destroy (GtkObject *object)
+ {
+-	GtkCairo *gtkcairo;
++  GtkCairo *gtkcairo;
+ 
+-	g_return_if_fail (object != NULL);
+-	g_return_if_fail (GTK_IS_CAIRO (object));
++  g_return_if_fail (object != NULL);
++  g_return_if_fail (GTK_IS_CAIRO (object));
+ 
+-	gtkcairo = GTK_CAIRO (object);
++  gtkcairo = GTK_CAIRO (object);
+ 
+-	gdkcairo_destroy (gtkcairo->gdkcairo);
++  gdkcairo_destroy (gtkcairo->gdkcairo);
+ 
+-	if (GTK_OBJECT_CLASS (parent_class)->destroy)
+-		(* GTK_OBJECT_CLASS (parent_class)->destroy) (object);
++  if (GTK_OBJECT_CLASS (parent_class)->destroy)
++    (*GTK_OBJECT_CLASS (parent_class)->destroy) (object);
+ }
+ 
+ static void
+ gtk_cairo_realize (GtkWidget *widget)
+ {
+-	GtkCairo *gtkcairo;
++  GtkCairo *gtkcairo;
+ 
+-	g_return_if_fail (widget != NULL);
+-	g_return_if_fail (GTK_IS_CAIRO (widget));
++  g_return_if_fail (widget != NULL);
++  g_return_if_fail (GTK_IS_CAIRO (widget));
+ 
+-	GTK_WIDGET_SET_FLAGS (widget, GTK_REALIZED);
+-	gtkcairo = GTK_CAIRO (widget);
++  GTK_WIDGET_SET_FLAGS (widget, GTK_REALIZED);
++  gtkcairo = GTK_CAIRO (widget);
+ 
+-	gdkcairo_realize (gtkcairo->gdkcairo);
++  gdkcairo_realize (gtkcairo->gdkcairo);
+ }
+ 
+ static void
+ gtk_cairo_size_allocate (GtkWidget     *widget,
+                          GtkAllocation *allocation)
+ {
+-    GtkCairo *gtkcairo;
+-	g_return_if_fail (widget != NULL);
+-	g_return_if_fail (GTK_IS_CAIRO (widget));
+-	g_return_if_fail (allocation != NULL);
+-
+-	gtkcairo = GTK_CAIRO (widget);
+-
+-	widget->allocation = *allocation;
+-
+-	gdkcairo_size_allocate (gtkcairo->gdkcairo,
+-			allocation->x, allocation->y,
+-			allocation->width, allocation->height);
++  GtkCairo *gtkcairo;
++  g_return_if_fail (widget != NULL);
++  g_return_if_fail (GTK_IS_CAIRO (widget));
++  g_return_if_fail (allocation != NULL);
++
++  gtkcairo = GTK_CAIRO (widget);
++
++  widget->allocation = *allocation;
++
++  gdkcairo_size_allocate (gtkcairo->gdkcairo,
++                          allocation->x, allocation->y,
++                          allocation->width, allocation->height);
+ }
+ 
+ static gint
+ gtk_cairo_expose (GtkWidget      *widget,
+                   GdkEventExpose *event)
+ {
+-	GtkCairo *gtkcairo;
++  GtkCairo *gtkcairo;
+ 
+-	g_return_val_if_fail (widget != NULL, FALSE);
+-	g_return_val_if_fail (GTK_IS_CAIRO (widget), FALSE);
+-	g_return_val_if_fail (event != NULL, FALSE);
++  g_return_val_if_fail (widget != NULL, FALSE);
++  g_return_val_if_fail (GTK_IS_CAIRO (widget), FALSE);
++  g_return_val_if_fail (event != NULL, FALSE);
+ 
+-	gtkcairo = GTK_CAIRO (widget);
++  gtkcairo = GTK_CAIRO (widget);
+ 
+-	cairo_save (gtk_cairo_get_cairo (gtkcairo));
+-	gdkcairo_expose (gtkcairo->gdkcairo, event);
+-	cairo_restore (gtk_cairo_get_cairo (gtkcairo));
+-	return FALSE;
++  gdkcairo_expose (gtkcairo->gdkcairo, event);
++  return FALSE;
+ }
+ 
+-cairo_t *
+-gtk_cairo_get_cairo (GtkCairo *gtkcairo) {
+-	g_return_val_if_fail (gtkcairo != NULL, NULL);
+-	g_return_val_if_fail (GTK_IS_CAIRO (gtkcairo), NULL);
+-	return ((gdkcairo_t*) gtkcairo->gdkcairo)->cr;
++cairo_t  *
++gtk_cairo_get_cairo (GtkCairo *gtkcairo)
++{
++  g_return_val_if_fail (gtkcairo != NULL, NULL);
++  g_return_val_if_fail (GTK_IS_CAIRO (gtkcairo), NULL);
++  return ((gdkcairo_t *) gtkcairo->gdkcairo)->cr;
+ }
+ 
+ void
+-gtk_cairo_set_gdk_color (cairo_t *cr,
++gtk_cairo_set_gdk_color (cairo_t  *cr,
+                          GdkColor *color)
+ {
+-    double red, green, blue;
++  double    red, green, blue;
+ 
+-    red   = color->red   / 65535.0;
+-    green = color->green / 65535.0;
+-    blue  = color->blue  / 65535.0;
++  red = color->red / 65535.0;
++  green = color->green / 65535.0;
++  blue = color->blue / 65535.0;
+ 
+-    cairo_set_rgb_color (cr, red, green, blue);
++  cairo_set_source_rgb (cr, red, green, blue);
+ }
+ 
+ int
+ gtk_cairo_backend_is_gl (GtkCairo *gtkcairo)
+ {
+-	if (((gdkcairo_t*)gtkcairo->gdkcairo)->backend == GDKCAIRO_BACKEND_GL)
+-		return 1;
+-	return 0;
++  if (((gdkcairo_t *) gtkcairo->gdkcairo)->backend == GDKCAIRO_BACKEND_GL)
++    return 1;
++  return 0;
+ }
+ 
+ #if 0
+@@ -221,26 +215,25 @@
+  */
+ 
+ cairo_surface_t *
+-gtk_cairo_surface_create_for_gdk_pixbuf (const GdkPixbuf *pixbuf)
++gtk_cairo_surface_create_for_gdk_pixbuf (const GdkPixbuf * pixbuf)
+ {
+-	cairo_surface_t *self;
+-	char            *data;
+-	cairo_format_t   format;
+-	int              width;
+-	int              height;
+-	int              stride;
+-
+-	if (!pixbuf)
+-		return NULL;
+-	data   = gdk_pixbuf_get_pixels (pixbuf);
+-	width  = gdk_pixbuf_get_width  (pixbuf);
+-	height = gdk_pixbuf_get_height (pixbuf);
+-	format = CAIRO_FORMAT_ARGB32;
+-	stride = gdk_pixbuf_get_rowstride (pixbuf);
+-
+-	self   = cairo_surface_create_for_image (
+-			    data, format, width, height, stride);
+-	return self;
++  cairo_surface_t *self;
++  char     *data;
++  cairo_format_t format;
++  int       width;
++  int       height;
++  int       stride;
++
++  if (!pixbuf)
++    return NULL;
++  data = gdk_pixbuf_get_pixels (pixbuf);
++  width = gdk_pixbuf_get_width (pixbuf);
++  height = gdk_pixbuf_get_height (pixbuf);
++  format = CAIRO_FORMAT_ARGB32;
++  stride = gdk_pixbuf_get_rowstride (pixbuf);
++
++  self = cairo_surface_create_for_image (data, format, width, height, stride);
++  return self;
+ }
+ #endif
+ 
+--- gtkcairo-0.3/tests/demo.c.cairo	2005-08-12 10:09:46.000000000 +0200
++++ gtkcairo-0.3/tests/demo.c	2005-08-12 10:10:02.000000000 +0200
+@@ -1,12 +1,12 @@
+ /* vim: set ts=4 sw=4 et : */
+ 
+ #include <gtk/gtk.h>
+-#include <gtkcairo/gtkcairo.h>
++#include <gtkcairo.h>
+ 
+ #define ANIMATE_ROTATE_STEP 0.05
+ #define ANIMATE_FRAME_DELAY 40
+ 
+-#define ROTATE_MAX 6.28  /* 2*pi */
++#define ROTATE_MAX 6.28         /* 2*pi */
+ 
+ #define MARGIN 20
+ #define INITIAL_SIZE 200
+@@ -16,95 +16,104 @@
+        cairo_t   *cairo,
+        GtkRange  *range)
+ {
+-    gint width  = widget->allocation.width;
+-    gint height = widget->allocation.height;
+-    gint box_size = (width+height)/6, box_overlap = (width+height)/32;
++  gint width    = widget->allocation.width;
++  gint height   = widget->allocation.height;
++  gint box_size = (width + height) / 6;
++
++  cairo_save (cairo);
++    cairo_identity_matrix (cairo);
++    cairo_translate (cairo, width / 2, height / 2);
+ 
+-    cairo_save (cairo);
+-
+-    cairo_default_matrix (cairo);
+-    cairo_translate (cairo, width/2, height/2);
+-
+-    cairo_rotate (cairo, gtk_range_get_value(range));
++    cairo_rotate (cairo, gtk_range_get_value (range));
+     cairo_rectangle (cairo, -box_size, -box_size, box_size, box_size);
+-    cairo_set_rgb_color (cairo, 1, 0, 0);
++    cairo_set_source_rgb (cairo, 1, 0, 0);
+     cairo_fill (cairo);
+-    cairo_restore (cairo);
++  cairo_restore (cairo);
+ }
+ 
+ static void
+-slider_changed (GtkRange *range, GtkWidget *gtkcairo) {
+-    gtk_widget_queue_draw (gtkcairo);
++slider_changed (GtkRange  *range,
++                GtkWidget *gtkcairo)
++{
++  gtk_widget_queue_draw (gtkcairo);
+ }
+ 
+ static gboolean
+-animate_step (GtkRange *range) {
+-    double newval = gtk_range_get_value (range) + ANIMATE_ROTATE_STEP;
+-    if (newval > ROTATE_MAX) newval -= ROTATE_MAX;
+-    gtk_range_set_value(range, newval);
+-    return TRUE;
++animate_step (GtkRange *range)
++{
++  double    newval = gtk_range_get_value (range) + ANIMATE_ROTATE_STEP;
++  if (newval > ROTATE_MAX)
++    newval -= ROTATE_MAX;
++  gtk_range_set_value (range, newval);
++  return TRUE;
+ }
+ 
+ static void
+-animate_toggled (GtkToggleButton *tb, GtkRange *range) {
+-    static guint timerid = 0;
+-    gboolean active = gtk_toggle_button_get_active(tb);
+-    if (active && !timerid) {
+-        timerid = gtk_timeout_add (ANIMATE_FRAME_DELAY,
+-                                  (GtkFunction)animate_step, range);
+-    } else if (!active && timerid) {
+-        gtk_timeout_remove (timerid);
+-        timerid = 0;
++animate_toggled (GtkToggleButton *tb,
++                 GtkRange        *range)
++{
++  static guint timerid = 0;
++  gboolean  active = gtk_toggle_button_get_active (tb);
++  if (active && !timerid)
++    {
++      timerid = gtk_timeout_add (ANIMATE_FRAME_DELAY,
++                                 (GtkFunction) animate_step, range);
++    }
++  else if (!active && timerid)
++    {
++      gtk_timeout_remove (timerid);
++      timerid = 0;
+     }
+ }
+ 
+ static void
+-show_test (void) {
+-    GtkWidget *win, *vbox, *frame, *gtkcairo, *slider, *animate;
++show_test (void)
++{
++  GtkWidget *win, *vbox, *frame, *gtkcairo, *slider, *animate;
+ 
+-    win = gtk_window_new (GTK_WINDOW_TOPLEVEL);
+-    gtk_window_set_title (GTK_WINDOW (win), "GtkCairo Demo");
+-    g_signal_connect (G_OBJECT (win), "delete-event",
+-                      G_CALLBACK (gtk_main_quit), NULL);
++  win = gtk_window_new (GTK_WINDOW_TOPLEVEL);
++  gtk_window_set_title (GTK_WINDOW (win), "GtkCairo Demo");
++  g_signal_connect (G_OBJECT (win), "delete-event",
++                    G_CALLBACK (gtk_main_quit), NULL);
+ 
+-    vbox = gtk_vbox_new (FALSE, 6);
+-    gtk_container_set_border_width (GTK_CONTAINER (vbox), 12);
++  vbox = gtk_vbox_new (FALSE, 6);
++  gtk_container_set_border_width (GTK_CONTAINER (vbox), 12);
+ 
+-    frame = gtk_frame_new (NULL);
+-    gtk_frame_set_shadow_type (GTK_FRAME (frame), GTK_SHADOW_IN);
++  frame = gtk_frame_new (NULL);
++  gtk_frame_set_shadow_type (GTK_FRAME (frame), GTK_SHADOW_IN);
+ 
+-    slider = gtk_hscale_new_with_range (0, ROTATE_MAX, 0.05);
++  slider = gtk_hscale_new_with_range (0, ROTATE_MAX, 0.05);
+ 
+-    gtkcairo = gtk_cairo_new ();
+-    gtk_widget_set_usize (GTK_WIDGET (gtkcairo), INITIAL_SIZE, INITIAL_SIZE);
+-    g_signal_connect (G_OBJECT (gtkcairo), "paint",
+-                      G_CALLBACK (paint), slider);
++  gtkcairo = gtk_cairo_new ();
++  gtk_widget_set_usize (GTK_WIDGET (gtkcairo), INITIAL_SIZE, INITIAL_SIZE);
++  g_signal_connect (G_OBJECT (gtkcairo), "paint", G_CALLBACK (paint), slider);
+ 
+-    gtk_container_add (GTK_CONTAINER (frame), gtkcairo);
+-    gtk_box_pack_start (GTK_BOX (vbox), frame, TRUE, TRUE, 0);
++  gtk_container_add (GTK_CONTAINER (frame), gtkcairo);
++  gtk_box_pack_start (GTK_BOX (vbox), frame, TRUE, TRUE, 0);
+ 
+-    gtk_scale_set_draw_value (GTK_SCALE (slider), FALSE);
+-    g_signal_connect (G_OBJECT (slider), "value-changed",
+-                      G_CALLBACK (slider_changed), gtkcairo);
+-    gtk_box_pack_start (GTK_BOX (vbox), slider, FALSE, FALSE, 0);
++  gtk_scale_set_draw_value (GTK_SCALE (slider), FALSE);
++  g_signal_connect (G_OBJECT (slider), "value-changed",
++                    G_CALLBACK (slider_changed), gtkcairo);
++  gtk_box_pack_start (GTK_BOX (vbox), slider, FALSE, FALSE, 0);
+ 
+-    animate = gtk_check_button_new_with_label ("Animate");
+-    g_signal_connect (G_OBJECT (animate), "toggled",
+-                      G_CALLBACK(animate_toggled), slider);
+-    gtk_box_pack_start (GTK_BOX (vbox), animate, FALSE, FALSE, 0);
++  animate = gtk_check_button_new_with_label ("Animate");
++  g_signal_connect (G_OBJECT (animate), "toggled",
++                    G_CALLBACK (animate_toggled), slider);
++  gtk_box_pack_start (GTK_BOX (vbox), animate, FALSE, FALSE, 0);
+ 
+-    gtk_container_add (GTK_CONTAINER (win), vbox);
+-    gtk_widget_show_all (vbox);
++  gtk_container_add (GTK_CONTAINER (win), vbox);
++  gtk_widget_show_all (vbox);
+ 
+-    gtk_widget_show (win);
++  gtk_widget_show (win);
+ }
+ 
+ int
+-main (int argc, char *argv[]) {
+-    gtk_init (&argc, &argv);
+-    show_test ();
+-    gtk_main ();
++main (gint   argc,
++      gchar *argv[])
++{
++  gtk_init (&argc, &argv);
++  show_test ();
++  gtk_main ();
+ 
+-    return 0;
++  return 0;
+ }
+-
