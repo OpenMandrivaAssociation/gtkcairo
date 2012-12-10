@@ -5,15 +5,14 @@
 Summary:	Gtk widget wrapper for Cairo surfaces
 Name:		gtkcairo
 Version:	0.3
-Release:	%mkrel 6
+Release:	5
 License:	LGPL
 Group:		System/Libraries
 Source0:	http://cairographics.org/snapshots/%name-%version.tar.bz2
-Patch:	gtkcairo-0.3-cairo.patch
+Patch0:	gtkcairo-0.3-cairo.patch
 URL:		http://cairographics.org/GtkCairo
-BuildRequires:	cairo-devel
-BuildRequires:	gtk2-devel
-BuildRoot:	%_tmppath/%name-%version-root
+BuildRequires:	pkgconfig(cairo)
+BuildRequires:	pkgconfig(gtk+-2.0)
 
 %description
 GtkCairo is a library that provides a new widget to be used in your
@@ -49,7 +48,7 @@ Static GtkCairo library.
 
 %prep
 %setup -q
-%patch -p1 -b .cairo
+%patch0 -p1 -b .cairo
 
 %build
 export CFLAGS="%optflags -I`pwd`/%name"
@@ -57,34 +56,51 @@ export CFLAGS="%optflags -I`pwd`/%name"
 %make
 
 %install
-rm -rf $RPM_BUILD_ROOT
 
 %makeinstall
-
-%clean
-rm -rf $RPM_BUILD_ROOT
-
-%if %mdkversion < 200900
-%post	-n %{libname} -p /sbin/ldconfig
-%endif
-%if %mdkversion < 200900
-%postun	-n %{libname} -p /sbin/ldconfig
-%endif
-
 
 %files -n %{libname}
 %defattr(644,root,root,755)
 %doc AUTHORS COPYING ChangeLog README NEWS
-%_libdir/lib*.so.*
+%attr(755,root,root) %_libdir/lib*.so.*
 
 %files -n %{libnamedev}
 %defattr(644,root,root,755)
 %_libdir/lib*.so
-%_libdir/lib*.la
 %_includedir/*
 %_libdir/pkgconfig/*.pc
 
 %files -n %{libname}-static-devel
 %defattr(644,root,root,755)
 %_libdir/lib*.a
+
+
+
+%changelog
+* Thu Jul 24 2008 Thierry Vignaud <tvignaud@mandriva.com> 0.3-5mdv2009.0
++ Revision: 246676
+- rebuild
+
+  + Pixel <pixel@mandriva.com>
+    - do not call ldconfig in %%post/%%postun, it is now handled by filetriggers
+
+  + Olivier Blin <oblin@mandriva.com>
+    - restore BuildRoot
+
+* Mon Dec 17 2007 Thierry Vignaud <tvignaud@mandriva.com> 0.3-3mdv2008.1
++ Revision: 126401
+- kill re-definition of %%buildroot on Pixel's request
+- use %%mkrel
+
+
+* Fri Aug 12 2005 Götz Waschk <waschk@mandriva.org> 0.3-3mdk
+- it's LGPL now
+- patch for new cairo
+
+* Sat Dec 25 2004 Marcel Pol <mpol@mandrake.org> 0.3-2mdk
+- buildrequires gtk2-devel
+
+* Fri Sep 17 2004 Lenny Cartier <lenny@mandrakesoft.com> 0.3-1mdk
+- from Tigrux <tigrux@ximian.com> : 
+	- First RPM, based on Cairo rpm
 
