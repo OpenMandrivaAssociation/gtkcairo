@@ -10,7 +10,7 @@ License:	LGPL
 Group:		System/Libraries
 Source0:	http://cairographics.org/snapshots/%name-%version.tar.bz2
 Patch0:	gtkcairo-0.3-cairo.patch
-URL:		http://cairographics.org/GtkCairo
+URL:		https://cairographics.org/GtkCairo
 BuildRequires:	pkgconfig(cairo)
 BuildRequires:	pkgconfig(gtk+-2.0)
 
