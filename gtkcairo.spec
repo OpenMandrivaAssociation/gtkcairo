@@ -11,6 +11,11 @@ Group:		System/Libraries
 Source0:	http://cairographics.org/snapshots/%name-%version.tar.bz2
 Patch0:	gtkcairo-0.3-cairo.patch
 URL:		https://cairographics.org/GtkCairo
+BuildRequires:	autoconf
+BuildRequires:	automake
+BuildRequires:	libtool-base
+BuildRequires:	slibtool
+BuildRequires:	make
 BuildRequires:	pkgconfig(cairo)
 BuildRequires:	pkgconfig(gtk+-2.0)
 
